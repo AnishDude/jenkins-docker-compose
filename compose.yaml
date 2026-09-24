@@ -1,0 +1,86 @@
+services:
+
+  # Docker-in-Docker (DinD) service.
+  # Provides an isolated Docker daemon that Jenkins can use to
+  # build application container images.
+  docker:
+    image: docker:29-dind
+    container_name: jenkins-docker
+    privileged: true
+    restart: unless-stopped
+
+    environment:
+      # Enable TLS protection for communication with the Docker daemon.
+      DOCKER_TLS_CERTDIR: /certs
+
+    volumes:
+      # Store Docker TLS client certificates shared with Jenkins.
+      - docker-certs:/certs/client
+
+      # Persist Docker build data between container restarts.
+      - docker-data:/var/lib/docker
+
+      # Share the Jenkins workspace with DinD so Docker-based
+      # Jenkins pipeline agents can access the build workspace.
+      - jenkins-home:/var/jenkins_home
+
+    networks:
+      - jenkins-network
+
+  # Jenkins CI/CD server.
+  # Uses the custom Jenkins image defined in the Dockerfile.
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: jenkins
+    restart: unless-stopped
+
+    # Run Jenkins using its standard non-root account.
+    user: jenkins
+
+    depends_on:
+      - docker
+
+    ports:
+      # Restrict the Jenkins web interface to the local machine.
+      - "127.0.0.1:8080:8080"
+
+    environment:
+      # Tell the Docker CLI inside Jenkins to use the DinD service.
+      DOCKER_HOST: tcp://docker:2376
+
+      # Require TLS verification for communication with DinD.
+      DOCKER_TLS_VERIFY: "1"
+
+      # Location of the Docker client TLS certificates.
+      DOCKER_CERT_PATH: /certs/client
+
+    volumes:
+      # Persist Jenkins jobs, plugins, configuration and build history.
+      - jenkins-home:/var/jenkins_home
+
+      # Provide Jenkins read-only access to the Docker TLS certificates.
+      - docker-certs:/certs/client:ro
+
+    # Explicit DNS servers help Jenkins resolve external services.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+    networks:
+      - jenkins-network
+
+
+# Named volumes provide persistent storage for Jenkins and Docker.
+volumes:
+  jenkins-home:
+  docker-certs:
+  docker-data:
+
+
+# Private bridge network used for Jenkins-to-DinD communication.
+networks:
+  jenkins-network:
+    driver: bridge
